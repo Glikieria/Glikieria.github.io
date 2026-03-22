@@ -3,211 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的笔记博客</title>
-    <!-- 使用 marked.js 解析 Markdown -->
+    <title>我的笔记</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background-color: #f9f9f9;
-            padding: 20px;
-        }
-        .container {
             max-width: 800px;
-            margin: 0 auto;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f9f9f9;
+            color: #333;
+        }
+        .card {
             background: white;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             padding: 2rem;
         }
-        header h1 {
-            margin-bottom: 2rem;
-            color: #2c3e50;
+        h1 {
             border-bottom: 2px solid #eee;
             padding-bottom: 0.5rem;
         }
-        .post-list .post-item {
-            margin-bottom: 1.5rem;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid #eee;
-        }
-        .post-item h2 {
-            margin-bottom: 0.25rem;
-        }
-        .post-item a {
-            text-decoration: none;
+        a {
             color: #3498db;
+            text-decoration: none;
         }
-        .post-item a:hover {
+        a:hover {
             text-decoration: underline;
         }
         .post-meta {
-            font-size: 0.85rem;
             color: #7f8c8d;
-        }
-        .post-content {
-            margin-top: 1rem;
-        }
-        #back-to-list {
-            background: #3498db;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 4px;
-            cursor: pointer;
-            margin-bottom: 1rem;
             font-size: 0.9rem;
+            margin-top: -1rem;
+            margin-bottom: 2rem;
         }
-        #back-to-list:hover {
-            background: #2980b9;
+        .back-link {
+            display: inline-block;
+            margin-bottom: 1rem;
         }
-        .post-body {
-            font-size: 1rem;
-        }
-        .post-body h1, .post-body h2, .post-body h3 {
-            margin-top: 1.5em;
-            margin-bottom: 0.5em;
-        }
-        .post-body p {
-            margin-bottom: 1em;
-        }
-        .post-body code {
-            background: #f4f4f4;
-            padding: 0.2em 0.4em;
-            border-radius: 3px;
-            font-family: monospace;
-        }
-        .post-body pre {
-            background: #f4f4f4;
-            padding: 1em;
-            overflow-x: auto;
-            border-radius: 5px;
+        hr {
+            margin: 2rem 0;
         }
     </style>
 </head>
 <body>
-<div class="container">
-    <header>
-        <h1>📝 我的笔记博客</h1>
-    </header>
-
-    <!-- 文章列表容器 -->
-    <div id="post-list" class="post-list">
-        <p>加载中...</p>
+<div class="card">
+    <div id="list-view">
+        <h1>📝 我的笔记</h1>
+        <p><a href="#" id="test-link">测试文章</a> (test.md)</p>
     </div>
-
-    <!-- 文章内容容器（初始隐藏） -->
-    <div id="post-content" class="post-content" style="display: none;"></div>
+    <div id="post-view" style="display: none;">
+        <a href="#" id="back-link" class="back-link">← 返回列表</a>
+        <div id="post-content"></div>
+    </div>
 </div>
 
 <script>
-    // ==================== 配置区 ====================
-    // 在这里定义你的文章列表（每新增一篇笔记，就在数组里加一项）
-        const posts = [
-    { filename: "test.md", title: "测试", date: "今天" }];
-        // 继续添加更多文章...
-    ];
+    const listView = document.getElementById('list-view');
+    const postView = document.getElementById('post-view');
+    const postContent = document.getElementById('post-content');
 
-    // Markdown 文件存放的路径（相对于 index.html）
-    const POSTS_PATH = '_posts/';
-    // =============================================
-
-    const listContainer = document.getElementById('post-list');
-    const contentContainer = document.getElementById('post-content');
-
-    // 渲染文章列表
-    function renderList() {
-        if (posts.length === 0) {
-            listContainer.innerHTML = '<p>暂无文章，请在代码中添加 posts 条目。</p>';
-            return;
-        }
-
-        let html = '';
-        posts.forEach(post => {
-            html += `
-                <div class="post-item">
-                    <h2><a href="#" data-filename="${post.filename}">${escapeHtml(post.title)}</a></h2>
-                    <div class="post-meta">📅 ${escapeHtml(post.date)}</div>
-                </div>
-            `;
-        });
-        listContainer.innerHTML = html;
-
-        // 绑定点击事件（事件委托）
-        listContainer.addEventListener('click', (e) => {
-            const link = e.target.closest('a');
-            if (link && link.dataset.filename) {
-                e.preventDefault();
-                const filename = link.dataset.filename;
-                loadAndDisplayPost(filename);
-            }
-        });
-    }
-
-    // 加载并显示文章
-    function loadAndDisplayPost(filename) {
-        const fileUrl = POSTS_PATH + filename;
-
-        fetch(fileUrl)
+    // 加载并显示 test.md
+    function loadTestMarkdown() {
+        fetch('test.md')
             .then(response => {
-                if (!response.ok) throw new Error(`HTTP ${response.status}: 文件不存在`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: 文件不存在，请确认仓库根目录有 test.md 文件`);
+                }
                 return response.text();
             })
             .then(markdown => {
-                // 使用 marked 解析 Markdown
                 const html = marked.parse(markdown);
-                contentContainer.innerHTML = `
-                    <button id="back-to-list">← 返回列表</button>
-                    <div class="post-body">${html}</div>
-                `;
-                // 隐藏列表，显示内容区
-                listContainer.style.display = 'none';
-                contentContainer.style.display = 'block';
-
-                // 绑定返回按钮
-                document.getElementById('back-to-list').addEventListener('click', () => {
-                    contentContainer.style.display = 'none';
-                    listContainer.style.display = 'block';
-                    window.scrollTo(0, 0);
-                });
+                postContent.innerHTML = html;
+                // 切换视图
+                listView.style.display = 'none';
+                postView.style.display = 'block';
             })
             .catch(err => {
-                contentContainer.innerHTML = `
-                    <p>❌ 加载失败：${err.message}</p>
-                    <button id="back-to-list">← 返回列表</button>
-                `;
-                listContainer.style.display = 'none';
-                contentContainer.style.display = 'block';
-                document.getElementById('back-to-list').addEventListener('click', () => {
-                    contentContainer.style.display = 'none';
-                    listContainer.style.display = 'block';
-                    window.scrollTo(0, 0);
-                });
+                postContent.innerHTML = `<p style="color:red;">❌ 加载失败: ${err.message}</p>`;
+                listView.style.display = 'none';
+                postView.style.display = 'block';
             });
     }
 
-    // 简单的防 XSS 辅助函数（转义 HTML 特殊字符）
-    function escapeHtml(str) {
-        if (!str) return '';
-        return str.replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
-        }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
-            return c;
-        });
+    // 返回列表
+    function backToList() {
+        listView.style.display = 'block';
+        postView.style.display = 'none';
     }
 
-    // 启动
-    renderList();
+    // 绑定事件
+    document.getElementById('test-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        loadTestMarkdown();
+    });
+
+    document.getElementById('back-link').addEventListener('click', (e) => {
+        e.preventDefault();
+        backToList();
+    });
 </script>
 </body>
 </html>
