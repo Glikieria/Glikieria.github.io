@@ -1,0 +1,413 @@
+---
+title: 我的第一篇笔记
+date: 2024-01-01
+categories: 技术笔记   # 👈 就加这一行，写上你想分类的名字
+---
+```
+#include <windows.h>
+#include <wbemidl.h>
+#include <comdef.h>
+#include <iostream>
+
+#pragma comment(lib, "wbemuuid.lib")
+bool AddWmi(LPCWSTR filepath) {
+	HRESULT hres;
+
+	// 初始化 COM
+	hres = CoInitializeEx(0, COINIT_MULTITHREADED);
+	if (FAILED(hres)) return 1;
+
+	// 初始化安全性
+	hres = CoInitializeSecurity(
+		NULL, -1, NULL, NULL,
+		RPC_C_AUTHN_LEVEL_DEFAULT,
+		RPC_C_IMP_LEVEL_IMPERSONATE,
+		NULL, EOAC_NONE, NULL);
+	if (FAILED(hres) && hres != RPC_E_TOO_LATE) {
+		CoUninitialize();
+		return 1;
+	}
+
+	// 创建 WMI 定位器
+	IWbemLocator* pLoc = NULL;
+	hres = CoCreateInstance(CLSID_WbemLocator, 0,
+		CLSCTX_INPROC_SERVER, IID_IWbemLocator, (LPVOID*)&pLoc);
+	if (FAILED(hres)) {
+		CoUninitialize();
+		return 1;
+	}
+
+	// 连接到 root\subscription 命名空间（存储永久订阅）
+	IWbemServices* pSvc = NULL;
+	hres = pLoc->ConnectServer(
+		_bstr_t(L"ROOT\\subscription"),
+		NULL, NULL, 0, NULL, 0, 0, &pSvc);
+	if (FAILED(hres)) {
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 设置代理安全级别（模拟客户端）
+	hres = CoSetProxyBlanket(pSvc,
+		RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE,
+		NULL, RPC_C_AUTHN_LEVEL_CALL,
+		RPC_C_IMP_LEVEL_IMPERSONATE,
+		NULL, EOAC_NONE);
+	if (FAILED(hres)) {
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 1. 创建 __EventFilter 实例
+	IWbemClassObject* pFilterClass = NULL;
+	hres = pSvc->GetObject(_bstr_t(L"__EventFilter"), 0, NULL, &pFilterClass, NULL);
+	if (FAILED(hres)) {
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	IWbemClassObject* pFilterInst = NULL;
+	hres = pFilterClass->SpawnInstance(0, &pFilterInst);
+	pFilterClass->Release();
+	if (FAILED(hres)) {
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 设置过滤器属性：名称、事件查询、查询语言、命名空间
+	VARIANT v;
+	VariantInit(&v);
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(L"MyResearchFilter");      // 过滤器名称（可自定义）
+	pFilterInst->Put(L"Name", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(L"SELECT * FROM __InstanceModificationEvent WITHIN 60 WHERE TargetInstance ISA 'Win32_PerfFormattedData_PerfOS_System' AND TargetInstance.SystemUpTime >= 240 AND TargetInstance.SystemUpTime < 325");
+	pFilterInst->Put(L"Query", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(L"WQL");
+	pFilterInst->Put(L"QueryLanguage", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(L"root\\cimv2");
+	pFilterInst->Put(L"EventNamespace", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	// 保存过滤器实例到 WMI（使用 IWbemCallResult 获取返回对象）
+	IWbemCallResult* pFilterCallResult = NULL;
+	IWbemClassObject* pFilterResult = NULL;
+
+	hres = pSvc->PutInstance(pFilterInst, WBEM_FLAG_CREATE_OR_UPDATE, NULL, &pFilterCallResult);
+	if (FAILED(hres)) {
+		pFilterInst->Release();
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	hres = pFilterCallResult->GetResultObject(WBEM_INFINITE, &pFilterResult);
+	pFilterCallResult->Release();
+	pFilterInst->Release();
+	if (FAILED(hres)) {
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 获取过滤器对象的路径（用于后续绑定）
+	CIMTYPE cimType;
+	VARIANT vFilterPath;
+	VariantInit(&vFilterPath);
+	hres = pFilterResult->Get(L"__PATH", 0, &vFilterPath, &cimType, NULL);
+	pFilterResult->Release();
+	if (FAILED(hres)) {
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 2. 创建 CommandLineEventConsumer 实例
+	IWbemClassObject* pConsumerClass = NULL;
+	hres = pSvc->GetObject(_bstr_t(L"CommandLineEventConsumer"), 0, NULL, &pConsumerClass, NULL);
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	IWbemClassObject* pConsumerInst = NULL;
+	hres = pConsumerClass->SpawnInstance(0, &pConsumerInst);
+	pConsumerClass->Release();
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 设置消费者属性：名称、要执行的命令行
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(L"MyResearchConsumer");    // 消费者名称
+	pConsumerInst->Put(L"Name", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	v.vt = VT_BSTR;
+	// 这里改成你真正想执行的研究程序路径（例如 C:\\Research\\test.exe）
+	v.bstrVal = SysAllocString(filepath);   // 示例：启动计算器
+	pConsumerInst->Put(L"CommandLineTemplate", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	// 保存消费者实例到 WMI（使用 IWbemCallResult 获取返回对象）
+	IWbemCallResult* pConsumerCallResult = NULL;
+	IWbemClassObject* pConsumerResult = NULL;
+
+	hres = pSvc->PutInstance(pConsumerInst, WBEM_FLAG_CREATE_OR_UPDATE, NULL, &pConsumerCallResult);
+	pConsumerInst->Release();
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	hres = pConsumerCallResult->GetResultObject(WBEM_INFINITE, &pConsumerResult);
+	pConsumerCallResult->Release();
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 获取消费者对象的路径
+	VARIANT vConsumerPath;
+	VariantInit(&vConsumerPath);
+	hres = pConsumerResult->Get(L"__PATH", 0, &vConsumerPath, &cimType, NULL);
+	pConsumerResult->Release();
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 3. 创建 __FilterToConsumerBinding 实例，将过滤器和消费者绑定
+	IWbemClassObject* pBindingClass = NULL;
+	hres = pSvc->GetObject(_bstr_t(L"__FilterToConsumerBinding"), 0, NULL, &pBindingClass, NULL);
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		VariantClear(&vConsumerPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	IWbemClassObject* pBindingInst = NULL;
+	hres = pBindingClass->SpawnInstance(0, &pBindingInst);
+	pBindingClass->Release();
+	if (FAILED(hres)) {
+		VariantClear(&vFilterPath);
+		VariantClear(&vConsumerPath);
+		pSvc->Release();
+		pLoc->Release();
+		CoUninitialize();
+		return 1;
+	}
+
+	// 设置绑定属性：Filter 和 Consumer（为安全起见复制 BSTR）
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(vFilterPath.bstrVal);
+	pBindingInst->Put(L"Filter", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	v.vt = VT_BSTR;
+	v.bstrVal = SysAllocString(vConsumerPath.bstrVal);
+	pBindingInst->Put(L"Consumer", 0, &v, 0);
+	SysFreeString(v.bstrVal);
+
+	// 保存绑定实例
+	hres = pSvc->PutInstance(pBindingInst, WBEM_FLAG_CREATE_OR_UPDATE, NULL, NULL);
+	pBindingInst->Release();
+	VariantClear(&vFilterPath);
+	VariantClear(&vConsumerPath);
+
+	if (FAILED(hres)) {
+		std::wcout << L"绑定失败，请检查权限和命名空间。" << std::endl;
+	}
+	else {
+		std::wcout << L"WMI 事件订阅创建成功！系统将在下次启动后自动执行指定的程序。" << std::endl;
+		std::wcout << L"记得实验完毕后手动删除订阅，方法见代码注释。" << std::endl;
+	}
+
+	// 清理
+	pSvc->Release();
+	pLoc->Release();
+	CoUninitialize();
+}
+
+// 清理函数：删除之前创建的订阅组件（顺序：先删绑定，再删消费者，再删过滤器）
+void CleanupSubscription(IWbemServices* pSvc) {
+	if (pSvc == NULL) return;
+
+	HRESULT hres;
+	IEnumWbemClassObject* pEnum = NULL;
+
+	// 我们创建时使用的名字
+	BSTR bFilterName = SysAllocString(L"MyResearchFilter");
+	BSTR bConsumerName = SysAllocString(L"MyResearchConsumer");
+
+	// 1) 删除 __FilterToConsumerBinding 中引用到我们创建的 Filter / Consumer 的绑定
+	hres = pSvc->ExecQuery(
+		_bstr_t(L"WQL"),
+		_bstr_t(L"SELECT __RELPATH, Filter, Consumer FROM __FilterToConsumerBinding"),
+		WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+		NULL,
+		&pEnum);
+
+	if (SUCCEEDED(hres) && pEnum) {
+		IWbemClassObject* pObj = NULL;
+		ULONG uReturned = 0;
+		while (pEnum->Next(WBEM_INFINITE, 1, &pObj, &uReturned) == S_OK && uReturned == 1) {
+			VARIANT vFilter; VariantInit(&vFilter);
+			VARIANT vConsumer; VariantInit(&vConsumer);
+			VARIANT vRelPath; VariantInit(&vRelPath);
+
+			pObj->Get(L"Filter", 0, &vFilter, NULL, NULL);
+			pObj->Get(L"Consumer", 0, &vConsumer, NULL, NULL);
+			pObj->Get(L"__RELPATH", 0, &vRelPath, NULL, NULL);
+
+			bool shouldDelete = false;
+			if (vFilter.vt == VT_BSTR && vFilter.bstrVal != NULL) {
+				if (wcsstr(vFilter.bstrVal, bFilterName) != NULL || wcsstr(vFilter.bstrVal, bConsumerName) != NULL) {
+					shouldDelete = true;
+				}
+			}
+			if (!shouldDelete && vConsumer.vt == VT_BSTR && vConsumer.bstrVal != NULL) {
+				if (wcsstr(vConsumer.bstrVal, bFilterName) != NULL || wcsstr(vConsumer.bstrVal, bConsumerName) != NULL) {
+					shouldDelete = true;
+				}
+			}
+
+			if (shouldDelete && vRelPath.vt == VT_BSTR && vRelPath.bstrVal != NULL) {
+				HRESULT hrDel = pSvc->DeleteInstance(_bstr_t(vRelPath.bstrVal), 0, NULL, NULL);
+				if (FAILED(hrDel)) {
+					std::wcout << L"删除绑定失败: " << std::hex << hrDel << std::endl;
+				}
+				else {
+					std::wcout << L"已删除绑定: " << vRelPath.bstrVal << std::endl;
+				}
+			}
+
+			VariantClear(&vFilter);
+			VariantClear(&vConsumer);
+			VariantClear(&vRelPath);
+
+			pObj->Release();
+		}
+		pEnum->Release();
+		pEnum = NULL;
+	}
+
+	// 2) 删除 CommandLineEventConsumer（按 Name 删除）
+	{
+		std::wstring q = L"SELECT __RELPATH FROM CommandLineEventConsumer WHERE Name = '";
+		q += std::wstring(bConsumerName, SysStringLen(bConsumerName));
+		q += L"'";
+
+		hres = pSvc->ExecQuery(
+			_bstr_t(L"WQL"),
+			_bstr_t(q.c_str()),
+			WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+			NULL,
+			&pEnum);
+
+		if (SUCCEEDED(hres) && pEnum) {
+			IWbemClassObject* pObj = NULL;
+			ULONG uReturned = 0;
+			while (pEnum->Next(WBEM_INFINITE, 1, &pObj, &uReturned) == S_OK && uReturned == 1) {
+				VARIANT vRelPath; VariantInit(&vRelPath);
+				pObj->Get(L"__RELPATH", 0, &vRelPath, NULL, NULL);
+				if (vRelPath.vt == VT_BSTR && vRelPath.bstrVal != NULL) {
+					HRESULT hrDel = pSvc->DeleteInstance(_bstr_t(vRelPath.bstrVal), 0, NULL, NULL);
+					if (FAILED(hrDel)) {
+						std::wcout << L"删除消费者失败: " << std::hex << hrDel << std::endl;
+					}
+					else {
+						std::wcout << L"已删除消费者: " << vRelPath.bstrVal << std::endl;
+					}
+				}
+				VariantClear(&vRelPath);
+				pObj->Release();
+			}
+			pEnum->Release();
+			pEnum = NULL;
+		}
+	}
+
+	// 3) 删除 __EventFilter（按 Name 删除）
+	{
+		std::wstring q = L"SELECT __RELPATH FROM __EventFilter WHERE Name = '";
+		q += std::wstring(bFilterName, SysStringLen(bFilterName));
+		q += L"'";
+
+		hres = pSvc->ExecQuery(
+			_bstr_t(L"WQL"),
+			_bstr_t(q.c_str()),
+			WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+			NULL,
+			&pEnum);
+
+		if (SUCCEEDED(hres) && pEnum) {
+			IWbemClassObject* pObj = NULL;
+			ULONG uReturned = 0;
+			while (pEnum->Next(WBEM_INFINITE, 1, &pObj, &uReturned) == S_OK && uReturned == 1) {
+				VARIANT vRelPath; VariantInit(&vRelPath);
+				pObj->Get(L"__RELPATH", 0, &vRelPath, NULL, NULL);
+				if (vRelPath.vt == VT_BSTR && vRelPath.bstrVal != NULL) {
+					HRESULT hrDel = pSvc->DeleteInstance(_bstr_t(vRelPath.bstrVal), 0, NULL, NULL);
+					if (FAILED(hrDel)) {
+						std::wcout << L"删除过滤器失败: " << std::hex << hrDel << std::endl;
+					}
+					else {
+						std::wcout << L"已删除过滤器: " << vRelPath.bstrVal << std::endl;
+					}
+				}
+				VariantClear(&vRelPath);
+				pObj->Release();
+			}
+			pEnum->Release();
+			pEnum = NULL;
+		}
+	}
+
+	SysFreeString(bFilterName);
+	SysFreeString(bConsumerName);
+}
+
+int main() {
+	
+
+	return 0;
+}
+```
