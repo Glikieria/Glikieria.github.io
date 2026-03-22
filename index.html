@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的笔记</title>
+    <title>我的笔记博客</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         body {
@@ -24,19 +24,26 @@
         h1 {
             border-bottom: 2px solid #eee;
             padding-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
         }
-        a {
-            color: #3498db;
+        .post-item {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #eee;
+        }
+        .post-item h2 {
+            margin-bottom: 0.25rem;
+        }
+        .post-item a {
             text-decoration: none;
+            color: #3498db;
         }
-        a:hover {
+        .post-item a:hover {
             text-decoration: underline;
         }
         .post-meta {
             color: #7f8c8d;
-            font-size: 0.9rem;
-            margin-top: -1rem;
-            margin-bottom: 2rem;
+            font-size: 0.85rem;
         }
         .back-link {
             display: inline-block;
@@ -45,14 +52,31 @@
         hr {
             margin: 2rem 0;
         }
+        .post-body h1, .post-body h2, .post-body h3 {
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+        .post-body code {
+            background: #f4f4f4;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+        }
+        .post-body pre {
+            background: #f4f4f4;
+            padding: 1em;
+            overflow-x: auto;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
 <div class="card">
+    <!-- 列表视图 -->
     <div id="list-view">
         <h1>📝 我的笔记</h1>
-        <p><a href="#" id="test-link">测试文章</a> (test.md)</p>
+        <div id="posts-list"></div>
     </div>
+    <!-- 文章视图（初始隐藏） -->
     <div id="post-view" style="display: none;">
         <a href="#" id="back-link" class="back-link">← 返回列表</a>
         <div id="post-content"></div>
@@ -60,28 +84,68 @@
 </div>
 
 <script>
+    // ===================== 配置区 =====================
+    // 在这里添加你的所有笔记（每新增一篇，就在数组里加一项）
+    const posts = [
+        { filename: "test.md", title: "测试文章", date: "2025-03-22" },
+        // 后续添加示例：
+        { filename: "WMI自启动.md", title: "第二篇笔记", date: "2025-03-23" },
+        { filename: "常规注册表自启动.md", title: "学习心得", date: "2025-03-24" }
+    ];
+    // =================================================
+
     const listView = document.getElementById('list-view');
     const postView = document.getElementById('post-view');
-    const postContent = document.getElementById('post-content');
+    const postsListDiv = document.getElementById('posts-list');
+    const postContentDiv = document.getElementById('post-content');
 
-    // 加载并显示 test.md
-    function loadTestMarkdown() {
-        fetch('test.md')
+    // 渲染文章列表
+    function renderList() {
+        if (posts.length === 0) {
+            postsListDiv.innerHTML = '<p>暂无文章，请在代码中添加 posts 条目。</p>';
+            return;
+        }
+        let html = '';
+        posts.forEach(post => {
+            html += `
+                <div class="post-item">
+                    <h2><a href="#" data-filename="${escapeHtml(post.filename)}">${escapeHtml(post.title)}</a></h2>
+                    <div class="post-meta">📅 ${escapeHtml(post.date)}</div>
+                </div>
+            `;
+        });
+        postsListDiv.innerHTML = html;
+
+        // 绑定点击事件（事件委托）
+        postsListDiv.addEventListener('click', (e) => {
+            const link = e.target.closest('a');
+            if (link && link.dataset.filename) {
+                e.preventDefault();
+                loadMarkdown(link.dataset.filename);
+            }
+        });
+    }
+
+    // 加载并显示 Markdown 文件
+    function loadMarkdown(filename) {
+        fetch(filename)
             .then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: 文件不存在，请确认仓库根目录有 test.md 文件`);
+                    throw new Error(`HTTP ${response.status}: 文件 "${filename}" 不存在，请确认文件在仓库根目录`);
                 }
                 return response.text();
             })
             .then(markdown => {
                 const html = marked.parse(markdown);
-                postContent.innerHTML = html;
+                postContentDiv.innerHTML = html;
                 // 切换视图
                 listView.style.display = 'none';
                 postView.style.display = 'block';
+                // 滚动到顶部
+                window.scrollTo(0, 0);
             })
             .catch(err => {
-                postContent.innerHTML = `<p style="color:red;">❌ 加载失败: ${err.message}</p>`;
+                postContentDiv.innerHTML = `<p style="color:red;">❌ 加载失败: ${err.message}</p>`;
                 listView.style.display = 'none';
                 postView.style.display = 'block';
             });
@@ -93,16 +157,25 @@
         postView.style.display = 'none';
     }
 
-    // 绑定事件
-    document.getElementById('test-link').addEventListener('click', (e) => {
-        e.preventDefault();
-        loadTestMarkdown();
-    });
+    // 辅助函数：防 XSS
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
 
+    // 绑定返回按钮
     document.getElementById('back-link').addEventListener('click', (e) => {
         e.preventDefault();
         backToList();
     });
+
+    // 启动
+    renderList();
 </script>
 </body>
 </html>
